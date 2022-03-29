@@ -235,3 +235,28 @@ class HandleEndAccidentScenario(AtomicBehavior):
         """Updates the blackboard and succeds"""
         py_trees.blackboard.Blackboard().set("BA_HandleEndAccidentScenario", True, overwrite=True)
         return py_trees.common.Status.SUCCESS
+
+class HandleStartCutInScenario(AtomicBehavior):
+    """
+    Updates the blackboard to tell the background activity that the road behavior has to be initialized
+    """
+    def __init__(self, other_actors, name="HandleStartCutInScenario"):
+        self._other_actors = other_actors
+        super(HandleStartCutInScenario, self).__init__(name)
+
+    def update(self):
+        """Updates the blackboard and succeds"""
+        py_trees.blackboard.Blackboard().set("BA_HandleStartCutInScenario", [self._other_actors], overwrite=True)
+        return py_trees.common.Status.SUCCESS
+
+class HandleEndCutInScenario(AtomicBehavior):
+    """
+    Updates the blackboard to tell the background activity that the road behavior has to be initialized
+    """
+    def __init__(self, name="HandleEndCutInScenario"):
+        super(HandleEndCutInScenario, self).__init__(name)
+
+    def update(self):
+        """Updates the blackboard and succeds"""
+        py_trees.blackboard.Blackboard().set("BA_HandleEndCutInScenario", True, overwrite=True)
+        return py_trees.common.Status.SUCCESS

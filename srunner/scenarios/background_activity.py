@@ -1619,6 +1619,18 @@ class BackgroundBehavior(AtomicBehavior):
             self._road_extra_front_actors = 0
             py_trees.blackboard.Blackboard().set('BA_HandleEndAccidentScenario', None, True)
 
+        # Handles road accident scenario (Accident and Construction)
+        handle_start_cutin_data = py_trees.blackboard.Blackboard().get("BA_HandleStartCutInScenario")
+        if handle_start_cutin_data:
+            other_actors = handle_start_cutin_data
+            self._handle_cutin_scenario(other_actors)
+            py_trees.blackboard.Blackboard().set("BA_HandleStartCutInScenario", None, True)
+
+        # Handles road accident scenario (Accident and Construction)
+        handle_end_cutin_data = py_trees.blackboard.Blackboard().get("BA_HandleEndCutInScenario")
+        if handle_end_cutin_data:
+            py_trees.blackboard.Blackboard().set("BA_HandleEndCutInScenario", None, True)
+
         # Stops non route entries
         stop_entry_data = py_trees.blackboard.Blackboard().get('BA_StopEntries')
         if stop_entry_data is not None:
@@ -1784,6 +1796,24 @@ class BackgroundBehavior(AtomicBehavior):
                 front_actors.append(actor)
 
         self._move_actors_forward(front_actors, space)
+    def _handle_cutin_scenario(self, other_actors):
+        self._radius_increase_ratio = self._radius_increase_ratio * 8
+        furthest_location = None
+        furthest_distance = 0
+        ego_wp = self._route[self._route_index]
+        for lane in self._road_dict:
+            for actor in self._road_dict[lane].actors:
+                location = CarlaDataProvider.get_location(actor)
+                if location and self._is_location_behind_ego(location):
+                    self._tm.vehicle_percentage_speed_difference(actor, 100)
+                else:
+                    if ego_wp.transform.location.distance(location) > furthest_distance:
+                        furthest_location = location
+                        furthest_distance = ego_wp.transform.location.distance(location)
+        other_actors[0][0].set_autopilot(True)
+        self._tm.vehicle_percentage_speed_difference(other_actors[0][0], -100)
+        vehicle_path = [CarlaDataProvider.get_location(other_actors[0][0]), furthest_location]
+        self._tm.set_path(other_actors[0][0], vehicle_path)
 
     #############################
     ##     Actor functions     ##

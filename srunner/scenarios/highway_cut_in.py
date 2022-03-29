@@ -20,12 +20,29 @@ from srunner.scenariomanager.scenarioatomics.atomic_behaviors import ActorDestro
 from srunner.scenariomanager.scenarioatomics.atomic_criteria import CollisionTest
 from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import DriveDistance, WaitUntilInFront
 from srunner.scenarios.basic_scenario import BasicScenario
+from srunner.tools.background_manager import HandleStartCutInScenario, HandleEndCutInScenario
+
+def convert_dict_to_transform(actor_dict):
+    """
+    Convert a JSON string to a CARLA transform
+    """
+    return carla.Transform(
+        carla.Location(
+            x=float(actor_dict['x']),
+            y=float(actor_dict['y']),
+            z=float(actor_dict['z'])
+        ),
+        carla.Rotation(
+            roll=0.0,
+            pitch=0.0,
+            yaw=float(actor_dict['yaw'])
+        )
+    )
 
 class HighwayEntryCutIn(BasicScenario):
     """
-    This class holds everything required for a scenario in which another vehicle runs a red light
-    in front of the ego, forcing it to react. This vehicles are 'special' ones such as police cars,
-    ambulances or firetrucks.
+    This class holds everything required for a scenario in which another vehicle changes lane
+    abruptly in front of the ego, forcing it to react.
     """
 
     def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True,
@@ -37,11 +54,8 @@ class HighwayEntryCutIn(BasicScenario):
         self._world = world
         self._map = CarlaDataProvider.get_map()
         self.timeout = timeout
-        self._drive_distance = 100
-        self._other_init_speed = 100 / 3.6
-        self._other_end_speed = 70 / 3.6
-        self._factor = 0
-
+        self._drive_distance = 120
+        self._offset = 0.75
         super(HighwayEntryCutIn, self).__init__("HighwayEntryCutIn",
                                                 ego_vehicles,
                                                 config,
@@ -53,53 +67,31 @@ class HighwayEntryCutIn(BasicScenario):
         """
         Custom initialization
         """
-        starting_location = config.other_actors[0].transform.location
-        starting_waypoint = self._map.get_waypoint(starting_location)
+        starting_waypoint = self._map.get_waypoint(config.trigger_points[0].location)
 
-        other_vehicle = CarlaDataProvider.request_new_actor(config.other_actors[0].model, starting_waypoint.transform)
+        # Create the cut-in vehicle
+        displacement = self._offset * starting_waypoint.lane_width
+        r_vec = starting_waypoint.transform.get_right_vector()
+        w_loc = starting_waypoint.transform.location
+        w_loc += carla.Location(x=displacement * -r_vec.x, y=displacement * -r_vec.y)
+        car_transform = carla.Transform(w_loc, starting_waypoint.transform.rotation)
+        other_vehicle = CarlaDataProvider.request_new_actor('vehicle.mercedes.coupe_2020', car_transform)
         self.other_actors.append(other_vehicle)
 
     def _create_behavior(self):
         """
-        Hero vehicle is entering a junction in an urban area, at a signalized intersection,
-        while another actor runs a red lift, forcing the ego to break.
+        Hero vehicle is on an highway, or a road with at least two lanes, and another vehicle cuts in front of it.
         """
 
-        behaviour = py_trees.composites.Sequence("ExitFreewayCutIn")
+        root = py_trees.composites.Sequence()
+        if CarlaDataProvider.get_ego_vehicle_route():
+            root.add_child(HandleStartCutInScenario(self.other_actors))
+        root.add_child(DriveDistance(self.ego_vehicles[0], self._drive_distance))
+        if CarlaDataProvider.get_ego_vehicle_route():
+            root.add_child(HandleEndCutInScenario())
+        root.add_child(ActorDestroy(self.other_actors[0]))
 
-        # Make the vehicle "sync" with the ego_vehicle
-        sync_arrival = py_trees.composites.Parallel(
-            "Sync Arrival", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
-        sync_arrival.add_child(WaitUntilInFront(self.other_actors[0], self.ego_vehicles[0], factor=self._factor))
-
-        sync_behavior = py_trees.composites.Sequence()
-        sync_behavior.add_child(SetInitSpeed(self.other_actors[0], self._other_init_speed))
-        sync_behavior.add_child(WaypointFollower(self.other_actors[0], self._other_init_speed * 1000))
-        sync_arrival.add_child(sync_behavior)
-
-        # Force a lane change
-        lane_change = LaneChange(
-            self.other_actors[0],
-            speed=self._other_end_speed,
-            direction='left',
-            distance_same_lane=1,
-            distance_other_lane=30,
-            distance_lane_change=60)
-
-        # End of the scenario
-        end_condition = py_trees.composites.Parallel(
-            "End condition", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
-
-        end_condition.add_child(DriveDistance(self.ego_vehicles[0], self._drive_distance))
-        end_condition.add_child(WaypointFollower(self.other_actors[0], self._other_end_speed))
-
-        # behaviour.add_child(init_speed)
-        behaviour.add_child(sync_arrival)
-        behaviour.add_child(lane_change)
-        behaviour.add_child(end_condition)
-        behaviour.add_child(ActorDestroy(self.other_actors[0]))
-
-        return behaviour
+        return root
 
     def _create_test_criteria(self):
         """
