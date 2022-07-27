@@ -1944,6 +1944,9 @@ class BasicAgentBehavior(AtomicBehavior):
 
     def initialise(self):
         """Initialises the agent"""
+        if 'use_current_speed' in self._opt_dict:
+            self._target_speed = 3.6 * CarlaDataProvider.get_velocity(self._actor)
+
         self._agent = BasicAgent(self._actor, self._target_speed, opt_dict=self._opt_dict,
             map_inst=CarlaDataProvider.get_map(), grp_inst=CarlaDataProvider.get_global_route_planner())
         if self._plan:
@@ -3840,6 +3843,7 @@ class ScenarioTimeout(AtomicBehavior):
         self._scenario_name = scenario_name
         self._start_time = 0
         self._scenario_timeout = False
+        self._terminated = False
         self.logger.debug("%s.__init__()" % (self.__class__.__name__))
 
     def initialise(self):
@@ -3848,6 +3852,7 @@ class ScenarioTimeout(AtomicBehavior):
         """
         self._start_time = GameTime.get_time()
         super().initialise()
+        py_trees.blackboard.Blackboard().set("AC_SwitchActorBlockedTest", False, overwrite=True)
 
     def update(self):
         """
@@ -3865,6 +3870,8 @@ class ScenarioTimeout(AtomicBehavior):
         """
         Modifies the blackboard to tell the `ScenarioTimeoutTest` if the timeout was triggered
         """
-        py_trees.blackboard.Blackboard().set(f"ScenarioTimeout_{self._scenario_name}", self._scenario_timeout, overwrite=True)
-        self._scenario_timeout = False  # py_trees calls the terminate several times for some reason.
+        if not self._terminated:  # py_trees calls the terminate several times for some reason.
+            py_trees.blackboard.Blackboard().set(f"ScenarioTimeout_{self._scenario_name}", self._scenario_timeout, overwrite=True)
+            py_trees.blackboard.Blackboard().set("AC_SwitchActorBlockedTest", True, overwrite=True)
+            self._terminated = True
         super().terminate(new_status)

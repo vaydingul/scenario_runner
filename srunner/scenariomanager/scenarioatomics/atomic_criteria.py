@@ -420,15 +420,25 @@ class ActorBlockedTest(Criterion):
     - terminate_on_failure [optional]: If True, the complete scenario will terminate upon failure of this test
     """
 
-    def __init__(self, actor, min_speed, max_time, name="ActorBlockedTest", optional=False, terminate_on_failure=False):
+    def __init__(self, actor, min_speed, max_time, route=None, name="ActorBlockedTest", optional=False, terminate_on_failure=False):
         """
         Class constructor
         """
-        super(ActorBlockedTest, self).__init__(name, actor, optional, terminate_on_failure)
+        super().__init__(name, actor, optional, terminate_on_failure)
         self._min_speed = min_speed
         self._max_time = max_time
         self._time_last_valid_state = None
+        self._active = True
         self.units = None  # We care about whether or not it fails, no units attached
+
+        # Debug changes the behavior from stopping the simulation to teleporting the actor to the nearest route point.
+        # TODO: This might fail if the actor is too far from the route, or weird route configurations
+        self._debug = True
+        self._teleport_dist = 5  # not meters, but route points!
+        self._destroy_threshold = 5  # On teleport, destroy all vehicles closer than this distance
+        self._route = route
+        if self._route is None:
+            raise ValueError("'ActorBlockedTest' criteria needs a 'route' when debugging")
 
     def update(self):
         """
@@ -436,29 +446,68 @@ class ActorBlockedTest(Criterion):
         """
         new_status = py_trees.common.Status.RUNNING
 
-        linear_speed = CarlaDataProvider.get_velocity(self.actor)
-        if linear_speed is not None:
-            if linear_speed < self._min_speed and self._time_last_valid_state:
-                if (GameTime.get_time() - self._time_last_valid_state) > self._max_time:
-                    # The actor has been "blocked" for too long, save the data
-                    self.test_status = "FAILURE"
-
-                    vehicle_location = CarlaDataProvider.get_location(self.actor)
-                    event = TrafficEvent(event_type=TrafficEventType.VEHICLE_BLOCKED, frame=GameTime.get_frame())
-                    event.set_message('Agent got blocked at (x={}, y={}, z={})'.format(
-                        round(vehicle_location.x, 3),
-                        round(vehicle_location.y, 3),
-                        round(vehicle_location.z, 3))
-                    )
-                    event.set_dict({'location': vehicle_location})
-                    self.events.append(event)
-            else:
-                self._time_last_valid_state = GameTime.get_time()
-
         if self._terminate_on_failure and (self.test_status == "FAILURE"):
             new_status = py_trees.common.Status.FAILURE
+
+        # Deactivate/Activate checking by blackboard message
+        active = py_trees.blackboard.Blackboard().get('AC_SwitchActorBlockedTest')
+        if active is not None:
+            self._active = active
+            self._time_last_valid_state = GameTime.get_time()
+            py_trees.blackboard.Blackboard().set("AC_SwitchActorBlockedTest", None, overwrite=True)
+
+        if self._active:
+
+            linear_speed = CarlaDataProvider.get_velocity(self.actor)
+
+            if linear_speed is not None:
+                if linear_speed < self._min_speed and self._time_last_valid_state:
+                    if (GameTime.get_time() - self._time_last_valid_state) > self._max_time:
+                        if self._debug:
+                            self._teleport_actor()
+                            self._time_last_valid_state = GameTime.get_time()
+                        else:
+                            # The actor has been "blocked" for too long, save the data
+                            self.test_status = "FAILURE"
+
+                            vehicle_location = CarlaDataProvider.get_location(self.actor)
+                            event = TrafficEvent(event_type=TrafficEventType.VEHICLE_BLOCKED, frame=GameTime.get_frame())
+                            event.set_message('Agent got blocked at (x={}, y={}, z={})'.format(
+                                round(vehicle_location.x, 3),
+                                round(vehicle_location.y, 3),
+                                round(vehicle_location.z, 3))
+                            )
+                            event.set_dict({'location': vehicle_location})
+                            self.events.append(event)
+                else:
+                    self._time_last_valid_state = GameTime.get_time()
+
         self.logger.debug("%s.update()[%s->%s]" % (self.__class__.__name__, self.status, new_status))
         return new_status
+
+    def _teleport_actor(self):
+        """Teleports the actor a bit in front"""
+        closest_dist = float('inf')
+        closest_index = None
+
+        actor_loc = CarlaDataProvider.get_location(self.actor)
+
+        for i, (tran, _) in enumerate(self._route):
+            dist = actor_loc.distance(tran.location)
+            if dist < closest_dist:
+                closest_index = i
+                closest_dist = dist
+
+        teleport_index = min(closest_index + self._teleport_dist, len(self._route) - 1)
+        teleport_transform = self._route[teleport_index][0]
+        teleport_transform.location.z += 0.1
+        self.actor.set_transform(teleport_transform)
+
+        vehicles = CarlaDataProvider.get_world().get_actors().filter('*vehicles*')
+        for vehicle in vehicles:
+            vehicle_loc = CarlaDataProvider.get_location(vehicle)
+            if vehicle_loc and vehicle_loc.distance(teleport_transform.location) < self._destroy_threshold:
+                vehicle_loc.destroy()
 
 
 class KeepLaneTest(Criterion):
@@ -1024,7 +1073,7 @@ class OutsideRouteLanesTest(Criterion):
         if location is None:
             return new_status
 
-        # Deactivate/Activate checking by blackboard message
+        # Deactivate / activate checking by blackboard message
         active = py_trees.blackboard.Blackboard().get('AC_SwitchWrongDirectionTest')
         if active is not None:
             self._wrong_direction_active = active
