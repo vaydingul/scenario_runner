@@ -12,10 +12,12 @@ It is for example used in the ScenarioManager
 from __future__ import print_function
 
 from threading import Timer
+
 try:
     import thread
 except ImportError:
     import _thread as thread
+import signal
 
 
 class Watchdog(object):
@@ -36,7 +38,9 @@ class Watchdog(object):
         """
         Class constructor
         """
-        self._timeout = timeout + 1.0  # Let's add one second here to avoid overlap with other CARLA timeouts
+        self._timeout = (
+            timeout + 1.0
+        )  # Let's add one second here to avoid overlap with other CARLA timeouts
         self._failed = False
         self._timer = None
 
@@ -60,7 +64,9 @@ class Watchdog(object):
         This method is called when the timer triggers. A KayboardInterrupt
         is generated on the main thread and the watchdog is stopped.
         """
-        print('Watchdog exception - Timeout of {} seconds occured'.format(self._timeout))
+        print(
+            "Watchdog exception - Timeout of {} seconds occured".format(self._timeout)
+        )
         self._failed = True
         self.stop()
         thread.interrupt_main()
